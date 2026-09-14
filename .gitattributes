@@ -1,0 +1,5 @@
+# Fins de ligne normalisees en LF dans le depot. Sans cela, un contributeur
+# sous Windows reecrit tous les fichiers au premier commit.
+* text=auto eol=lf
+*.png binary
+*.gif binary

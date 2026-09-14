@@ -1,0 +1,111 @@
+name: Publication
+
+# Déclenché par un tag vX.Y.Z. La publication sur PyPI passe par le Trusted
+# Publishing : GitHub prouve son identité à PyPI par OIDC, donc aucun jeton
+# d'API n'est stocké dans le dépôt.
+#
+# Configuration à faire une seule fois sur PyPI, dans Publishing :
+#   Owner        : GuillaumeYves
+#   Repository   : commytho
+#   Workflow     : release.yml
+#   Environment  : pypi
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verifie:
+    name: Cohérence du tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Un tag v0.2.0 posé sur un code encore en 0.1.0 produirait une version
+      # PyPI trompeuse, et PyPI refuse tout réenvoi. Mieux vaut échouer ici.
+      - name: Le tag correspond à la version du paquet
+        run: |
+          VERSION=$(python -c "import re,pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('src/commytho/__init__.py').read_text()).group(1))")
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "version du paquet : $VERSION"
+          echo "tag               : $TAG"
+          if [ "$VERSION" != "$TAG" ]; then
+            echo "Le tag et __version__ ne correspondent pas." >&2
+            exit 1
+          fi
+
+  tests:
+    name: Tests avant publication
+    needs: verifie
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -q
+
+  construit:
+    name: Construction
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip build twine
+      - run: python -m build
+      - name: Contrôle des archives
+        run: python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publie:
+    name: Publication sur PyPI
+    needs: construit
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/commytho
+    permissions:
+      # Indispensable au Trusted Publishing.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  annonce:
+    name: Release GitHub
+    needs: publie
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Crée la release et y attache les archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
