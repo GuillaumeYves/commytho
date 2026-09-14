@@ -5,7 +5,7 @@ numéros suivent [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
-## [0.1.0] - 2026-09-14
+## [1.0.0] - 2026-09-14
 
 Première version.
 
