@@ -68,3 +68,27 @@ def test_horodatage_git_au_fuseau_local():
     assert horodatage.startswith("2026-09-14T09:47:00")
     # Un fuseau est toujours présent, sinon git prendrait l'heure du réveil.
     assert horodatage[-5] in {"+", "-"}
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="spécifique à Windows")
+def test_le_xml_de_la_tache_desarme_la_batterie():
+    from commytho.schedulers.windows import _definition_xml
+
+    definition = _definition_xml(30)
+    # Sans ces deux lignes, un portable débranché ne commite pas une seule
+    # fois, et Windows n'en dit rien nulle part.
+    assert "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>" in definition
+    assert "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>" in definition
+    assert "<Interval>PT30M</Interval>" in definition
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="spécifique à Windows")
+def test_le_xml_de_la_tache_pointe_le_bon_interpreteur():
+    from commytho.schedulers.windows import _definition_xml
+
+    definition = _definition_xml(30)
+    executable, *arguments = tick_command()
+    # Le XML sépare l'exécutable de ses arguments, là où /TR attend une seule
+    # chaîne : pas de guillemets à ajouter autour du chemin.
+    assert f"<Command>{executable}</Command>" in definition
+    assert f"<Arguments>{' '.join(arguments)}</Arguments>" in definition

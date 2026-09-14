@@ -33,6 +33,29 @@ MESSAGES = [
     "Reprend le fil",
     "Note de suivi",
     "Trace du passage du jour",
+    # Quelques messages plus légers. Le journal n'a pas à être solennel, et un
+    # historique entièrement composé de phrases neutres finit par se voir
+    # autant qu'un historique trop régulier.
+    "Commit avant d'oublier",
+    "Le café a fini par faire effet",
+    "Une ligne pour la route",
+    "Je note, donc je suis",
+    "Le futur moi comprendra",
+    "Trois mots et au lit",
+    "Rien de cassé, promis",
+    "Déplace une virgule, change le monde",
+    "Ça tenait dans la marge",
+    "Petit commit entre amis",
+    "On verra ça demain",
+    "Encore une idée attrapée au vol",
+    "Le journal ne s'écrit pas tout seul",
+    "Un jour de plus, une ligne de plus",
+    "Écrit d'une main, café dans l'autre",
+    "Ceci méritait bien une ligne",
+    "Rangement de fin de journée",
+    "Noté avant que ça s'envole",
+    "Deux minutes bien employées",
+    "La suite au prochain épisode",
 ]
 
 

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
 
@@ -176,11 +178,25 @@ def _supprime_arborescence(chemin: Path) -> None:
 
 
 def make_commit(config: Config, token: str, jour: date, creneau: str, message: str) -> str:
-    """Ajoute une ligne au fichier suivi, commite, pousse, renvoie le hash court.
+    """Commite un seul créneau. Raccourci sur make_commits."""
+    return make_commits(config, token, jour, [(creneau, message)])[0]
 
-    La date du commit est celle du créneau, pas celle du réveil. Un rattrapage
-    après une machine éteinte reste donc cohérent avec le programme du jour.
+
+def make_commits(
+    config: Config, token: str, jour: date, creneaux: list[tuple[str, str]]
+) -> list[str]:
+    """Commite une série de créneaux, pousse une fois, renvoie les hashs courts.
+
+    La date de chaque commit est celle de son créneau, pas celle du réveil. Un
+    rattrapage après une machine éteinte reste donc cohérent avec le programme
+    du jour, même si les quarante commits partent dans la même seconde.
+
+    Le push est fait une seule fois, à la fin : rattraper un week-end éteint ne
+    doit pas ouvrir quarante connexions à GitHub.
     """
+    if not creneaux:
+        return []
+
     checkout = ensure_checkout(config, token)
     cible = checkout / config.target_file
     cible.parent.mkdir(parents=True, exist_ok=True)
@@ -188,25 +204,33 @@ def make_commit(config: Config, token: str, jour: date, creneau: str, message: s
     if not cible.exists():
         cible.write_text(messages.journal_header(), encoding="utf-8")
 
-    with cible.open("a", encoding="utf-8") as fichier:
-        fichier.write(messages.journal_line(jour, creneau, message))
+    empreintes: list[str] = []
+    for creneau, message in creneaux:
+        with cible.open("a", encoding="utf-8") as fichier:
+            fichier.write(messages.journal_line(jour, creneau, message))
+        with _dates_git(_iso_local(jour, creneau)):
+            run_git(["add", "--", config.target_file], cwd=checkout)
+            run_git(["commit", "-m", message], cwd=checkout)
+        empreintes.append(run_git(["rev-parse", "--short", "HEAD"], cwd=checkout))
 
-    horodatage = _iso_local(jour, creneau)
-    env_dates = {"GIT_AUTHOR_DATE": horodatage, "GIT_COMMITTER_DATE": horodatage}
-    ancien = {cle: os.environ.get(cle) for cle in env_dates}
-    os.environ.update(env_dates)
+    run_git(["push", "origin", f"HEAD:{config.repo.branch}"], cwd=checkout, token=token)
+    return empreintes
+
+
+@contextmanager
+def _dates_git(horodatage: str) -> Iterator[None]:
+    """Impose la date d'auteur et de commit, puis rend l'environnement intact."""
+    variables = {"GIT_AUTHOR_DATE": horodatage, "GIT_COMMITTER_DATE": horodatage}
+    ancien = {cle: os.environ.get(cle) for cle in variables}
+    os.environ.update(variables)
     try:
-        run_git(["add", "--", config.target_file], cwd=checkout)
-        run_git(["commit", "-m", message], cwd=checkout)
-        run_git(["push", "origin", f"HEAD:{config.repo.branch}"], cwd=checkout, token=token)
+        yield
     finally:
         for cle, valeur in ancien.items():
             if valeur is None:
                 os.environ.pop(cle, None)
             else:
                 os.environ[cle] = valeur
-
-    return run_git(["rev-parse", "--short", "HEAD"], cwd=checkout)
 
 
 def _iso_local(jour: date, creneau: str) -> str:

@@ -214,6 +214,8 @@ def cmd_up(args: argparse.Namespace) -> int:
             planning.cap_per_day = args.max
         if args.tick is not None:
             planning.tick_minutes = max(1, args.tick)
+        if args.rattrapage is not None:
+            planning.catch_up = max(0, args.rattrapage)
     except conf.ConfigError as exc:
         return erreur(str(exc))
 
@@ -393,38 +395,49 @@ def cmd_run(args: argparse.Namespace) -> int:
             print("Rien à faire pour le moment.")
         return 0
 
-    if len(etat.done) >= configuration.schedule.cap_per_day:
+    restant = configuration.schedule.cap_per_day - len(etat.done)
+    if restant <= 0:
         journalise(f"run : plafond du jour atteint ({configuration.schedule.cap_per_day})")
         state.save(etat)
         return 0
 
-    # En cas de rattrapage, on ne commite que le créneau le plus récent et on
-    # abandonne les autres. Rejouer six commits d'un coup après un week-end
-    # machine éteinte serait exactement le contraire du but recherché.
-    abandonnes = creneaux[:-1]
-    creneau = creneaux[-1]
+    # Politique de rattrapage. Par défaut on ne commite que le créneau le plus
+    # récent et on abandonne les autres : rejouer six commits d'un coup après un
+    # week-end machine éteinte serait le contraire du but recherché. Avec
+    # --rattrapage 0, tout le programme manqué est rejoué, ce qui convient quand
+    # la machine n'est allumée qu'une partie de la journée.
+    rattrapage = configuration.schedule.catch_up
+    limite = len(creneaux) if rattrapage <= 0 else rattrapage
+    limite = max(1, min(limite, restant))
+
+    abandonnes = creneaux[:-limite]
+    retenus = creneaux[-limite:]
     if abandonnes:
         etat.done.extend(abandonnes)
         journalise(f"run : créneaux passés abandonnés ({', '.join(abandonnes)})")
 
     pool = messages.load_pool(args.messages)
-    message = messages.pick(pool, aujourdhui, creneau)
+    a_commiter = [(creneau, messages.pick(pool, aujourdhui, creneau)) for creneau in retenus]
 
     try:
-        empreinte = repo.make_commit(configuration, token, aujourdhui, creneau, message)
+        empreintes = repo.make_commits(configuration, token, aujourdhui, a_commiter)
     except repo.GitError as exc:
         journalise(f"run : échec du commit ({exc})")
         return erreur(str(exc))
 
     if not args.force:
-        etat.done.append(creneau)
-    etat.total_commits += 1
+        etat.done.extend(retenus)
+    etat.total_commits += len(empreintes)
     etat.last_run = datetime.now().isoformat(timespec="seconds")
     state.save(etat)
 
-    journalise(f"run : commit {empreinte} pour le créneau {creneau} ({message})")
+    if len(empreintes) == 1:
+        resume = f"commit {empreintes[0]} pour le créneau {retenus[0]} ({a_commiter[0][1]})"
+    else:
+        resume = f"{len(empreintes)} commits rattrapés, de {retenus[0]} à {retenus[-1]}"
+    journalise(f"run : {resume}")
     if args.verbose or args.force:
-        print(f"Commit {empreinte} poussé vers {configuration.repo.full_name} : {message}")
+        print(f"{resume.capitalize()}, poussé vers {configuration.repo.full_name}")
     return 0
 
 
@@ -467,6 +480,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_up.add_argument("--max", type=int, metavar="N", help="plafond quotidien, 20 par défaut")
     p_up.add_argument("--tick", type=int, metavar="MINUTES", help="intervalle de réveil")
+    p_up.add_argument(
+        "--rattrapage",
+        type=int,
+        metavar="N",
+        help="créneaux en retard rejoués par réveil (0 pour tous)",
+    )
     p_up.add_argument("--messages", metavar="FICHIER", help="liste de messages, un par ligne")
     p_up.add_argument("--dry-run", action="store_true", help="afficher sans rien installer")
     p_up.set_defaults(func=cmd_up)

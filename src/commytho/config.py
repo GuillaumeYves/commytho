@@ -36,6 +36,9 @@ class Schedule:
     window_start: str = "09:00"
     window_end: str = "19:00"
     tick_minutes: int = 30
+    # Créneaux en retard rejoués à chaque réveil. 1 garde le rythme crédible
+    # après une longue absence ; 0 rattrape tout le programme manqué d'un coup.
+    catch_up: int = 1
 
     def describe(self) -> str:
         """Résumé sur une ligne, utilisé par la commande status."""
@@ -44,7 +47,16 @@ class Schedule:
             f"{self.min_per_day} à {self.max_per_day} commits par jour, "
             f"entre {self.window_start} et {self.window_end}, "
             f"les jours suivants : {jours} (plafond {self.cap_per_day})"
+            f", rattrapage : {self.describe_catch_up()}"
         )
+
+    def describe_catch_up(self) -> str:
+        """Politique de rattrapage, en clair."""
+        if self.catch_up <= 0:
+            return "tous les créneaux manqués"
+        if self.catch_up == 1:
+            return "le dernier créneau manqué"
+        return f"{self.catch_up} créneaux manqués par réveil"
 
 
 @dataclass
