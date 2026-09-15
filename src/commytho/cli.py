@@ -468,7 +468,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     resume = _resume(a_faire, entrees, empreintes, aujourdhui)
     journalise(f"run : {resume}")
     if args.verbose or args.force:
-        print(f"{resume.capitalize()}, poussé vers {depot}")
+        # capitalize mettrait le reste de la ligne en minuscules, message de
+        # commit compris : seule la première lettre doit changer.
+        print(f"{resume[0].upper()}{resume[1:]}, poussé vers {depot}")
     return 0
 
 
