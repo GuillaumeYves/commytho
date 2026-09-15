@@ -111,3 +111,10 @@ def test_un_creneau_deja_journalise_nest_pas_recommite(tmp_path, monkeypatch):
     # Le premier créneau était déjà là : seul le second donne un commit.
     assert [commit.creneau for commit in faits] == ["07:41"]
     assert sum(1 for args in appels if args[0] == "commit") == 1
+
+
+def test_la_visite_porte_sa_date_de_depart(configuration):
+    rendu = workflow.render(configuration, since=date(2026, 9, 15))
+    # Sans cette borne, la premiere visite prendrait les sept journees
+    # precedentes pour des journees manquees et inventerait une semaine.
+    assert "--depuis 2026-09-15" in rendu

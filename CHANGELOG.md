@@ -17,7 +17,9 @@ numéros suivent [SemVer](https://semver.org/lang/fr/).
   `--tz` donne le fuseau dans lequel dater les commits.
 - `commytho ci` est la visite elle-même, prévue pour tourner dans un runner.
   Elle ne lit ni configuration, ni fichier d'état, ni trousseau : tout vient de
-  ses options et de la copie du dépôt déjà présente.
+  ses options et de la copie du dépôt déjà présente. Sa date de départ borne la
+  reprise : le journal du dépôt étant sa seule mémoire, sans elle la première
+  visite prendrait la semaine précédente pour une semaine manquée.
 
 ### Modifié
 

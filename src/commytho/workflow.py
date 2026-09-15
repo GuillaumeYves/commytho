@@ -16,9 +16,15 @@ Le workflow ne demande aucun secret. actions/checkout laisse ses identifiants
 dans la copie, et la permission contents: write suffit à pousser. Les commits
 gardent l'adresse de l'auteur, qui est ce que GitHub regarde pour le graphe des
 contributions.
+
+La visite porte une date de départ. Sans elle, la toute première remonterait
+sept jours en arrière et inventerait une semaine d'activité, le journal du
+dépôt étant sa seule mémoire.
 """
 
 from __future__ import annotations
+
+from datetime import date
 
 from .config import DAY_NAMES, Config, minutes_of
 
@@ -45,7 +51,12 @@ def describe_days(config: Config) -> str:
     return ",".join(DAY_NAMES[d] for d in jours)
 
 
-def render(config: Config, source: str = SOURCE_PAR_DEFAUT, timezone: str = "") -> str:
+def render(
+    config: Config,
+    source: str = SOURCE_PAR_DEFAUT,
+    timezone: str = "",
+    since: date | None = None,
+) -> str:
     """Compose le fichier de workflow à déposer dans le dépôt cible."""
     planning = config.schedule
     auteur = f"{config.author.name} <{config.author.email}>"
@@ -107,4 +118,5 @@ jobs:
           --file {config.target_file}
           --max-lines {config.max_lines_per_file}
           --jours {max(planning.catch_up_days, 7)}
+          --depuis {(since or date.today()).isoformat()}
 """

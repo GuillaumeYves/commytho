@@ -419,7 +419,9 @@ def cmd_github(args: argparse.Namespace) -> int:
     if not configuration.author.email:
         return erreur("Aucun auteur connu. Lancez d'abord : commytho login")
 
-    contenu = workflow.render(configuration, source=args.source, timezone=args.tz)
+    contenu = workflow.render(
+        configuration, source=args.source, timezone=args.tz, since=_depart(configuration, args)
+    )
     if args.dry_run:
         print(contenu, end="")
         return 0
@@ -489,6 +491,23 @@ def cmd_github(args: argparse.Namespace) -> int:
     return 0
 
 
+def _depart(configuration: conf.Config, args: argparse.Namespace) -> date:
+    """Date avant laquelle la visite ne remonte pas.
+
+    Le journal du dépôt est la seule mémoire du runner : sans borne, sa
+    première visite prendrait les sept journées précédentes pour des journées
+    manquées. On s'aligne donc sur la pose de la tâche locale quand elle
+    existe, sur aujourd'hui sinon.
+    """
+    if args.since:
+        try:
+            return date.fromisoformat(args.since)
+        except ValueError as exc:
+            raise conf.ConfigError(f"Date de départ illisible : {args.since}") from exc
+    pose = _pose_le(configuration)
+    return pose or date.today()
+
+
 def _refus_de_workflow(message: str) -> bool:
     """Reconnaît le refus de GitHub quand le jeton n'a pas la permission Workflows."""
     repere = message.lower()
@@ -521,8 +540,11 @@ def cmd_ci(args: argparse.Namespace) -> int:
     pool = messages.load_pool(args.messages)
 
     entrees: list[tuple[date, str, str]] = []
+    depart = date.fromisoformat(args.depuis) if args.depuis else None
     for recul in range(max(0, args.jours), -1, -1):
         jour = aujourdhui - timedelta(days=recul)
+        if depart is not None and jour < depart:
+            continue
         programme = planner.plan_for_day(configuration.schedule, jour, configuration.repo.full_name)
         if not programme:
             continue
@@ -806,6 +828,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="SPEC",
         help="version de commytho installee par le workflow",
     )
+    p_github.add_argument(
+        "--since",
+        metavar="AAAA-MM-JJ",
+        default="",
+        help="date avant laquelle la visite ne remontera pas",
+    )
     p_github.add_argument("--remove", action="store_true", help="retirer le workflow du depot")
     p_github.add_argument(
         "--dry-run", action="store_true", help="afficher le workflow sans rien poser"
@@ -828,6 +856,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=7,
         metavar="N",
         help="journees passees reprises a chaque visite",
+    )
+    p_ci.add_argument(
+        "--depuis",
+        default="",
+        metavar="AAAA-MM-JJ",
+        help="date avant laquelle la visite ne remonte pas",
     )
     p_ci.add_argument("--messages", metavar="FICHIER", help="liste de messages, un par ligne")
     p_ci.add_argument("--verbose", action="store_true", help="detailler les commits poses")
