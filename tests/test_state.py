@@ -66,3 +66,33 @@ def test_pool_vide_retombe_sur_la_liste_par_defaut(tmp_path):
 def test_ligne_de_journal():
     ligne = messages.journal_line(date(2026, 9, 14), "09:47", "Note du jour")
     assert ligne == "- 2026-09-14 09:47 : Note du jour\n"
+
+
+def test_la_journee_qui_se_termine_part_a_lhistorique():
+    veille = state.State(day="2026-09-13", plan=["09:00", "15:00"], done=["09:00"])
+    nouveau = state.roll_over(veille, date(2026, 9, 14), ["10:00"], retention=7)
+    assert nouveau.history == {"2026-09-13": ["09:00"]}
+
+
+def test_lhistorique_est_elague_au_dela_de_la_retention():
+    ancien = state.State(
+        day="2026-09-13",
+        done=[],
+        history={"2026-09-01": ["09:00"], "2026-09-12": ["10:00"]},
+    )
+    nouveau = state.roll_over(ancien, date(2026, 9, 14), [], retention=3)
+    assert sorted(nouveau.history) == ["2026-09-12", "2026-09-13"]
+
+
+def test_sans_retention_lhistorique_ne_sert_a_rien():
+    veille = state.State(day="2026-09-13", done=["09:00"])
+    nouveau = state.roll_over(veille, date(2026, 9, 14), [], retention=0)
+    assert nouveau.history == {}
+
+
+def test_un_creneau_rattrape_est_note_sur_sa_journee():
+    courant = state.State(day="2026-09-14", history={})
+    state.record(courant, date(2026, 9, 12), ["08:10"])
+    state.record(courant, date(2026, 9, 14), ["09:00"])
+    assert courant.history == {"2026-09-12": ["08:10"]}
+    assert courant.done == ["09:00"]

@@ -5,6 +5,46 @@ numéros suivent [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.1.0] - 2026-09-15
+
+### Ajouté
+
+- Le fichier suivi laisse la place au suivant passé mille lignes : `journal.md`,
+  puis `journal-2.md`, et ainsi de suite. Le seuil se règle avec
+  `commytho up --max-lines N`, et `0` désactive la rotation. Le numéro en cours
+  est déduit des fichiers présents dans le dépôt, sans rien stocker à côté :
+  effacer l'état local ne fait pas repartir la rotation en arrière.
+- `commytho up --rattrapage-jours N` : nombre de journées passées reprises à la
+  réouverture de session. Une machine restée éteinte plusieurs jours solde son
+  arriéré au premier réveil, chaque commit gardant la date et l'heure de son
+  créneau d'origine. La valeur par défaut reste `0`, soit le jour courant seul.
+- L'état garde une trace des créneaux honorés les jours précédents, élaguée à
+  la durée de reprise demandée. Sans elle, une reprise ne saurait pas
+  distinguer une journée déjà soldée d'une journée entièrement manquée.
+
+### Modifié
+
+- Windows : plus aucune fenêtre n'apparaît pendant les commits. La tâche est
+  marquée masquée, et les processus git sont lancés sans console. Jusqu'ici,
+  pythonw.exe évitait bien la fenêtre du planificateur, mais chaque appel à
+  git, qui est une application console, en faisait ouvrir une par Windows : une
+  fenêtre noire clignotait au premier plan et volait le focus, plusieurs fois
+  par commit.
+- `commytho up` marque comme honorés les créneaux du jour déjà écoulés.
+  Changer de rythme ne déclenche donc plus une salve rétroactive : le nouveau
+  programme commence à l'heure de la pose, et les journées suivantes sont
+  complètes.
+- `commytho status` affiche le fichier réellement alimenté et le seuil de
+  rotation, plutôt que le seul nom de base.
+
+### Corrigé
+
+- Un programme serré rendait moins de commits que le nombre tiré. Avec
+  quarante commits dans une heure, les tranches font moins d'une minute et
+  plusieurs tirages tombaient sur la même : les doublons disparaissaient en
+  silence. Chaque doublon est désormais décalé sur la minute libre la plus
+  proche, sans sortir de la plage horaire.
+
 ## [1.0.1] - 2026-09-14
 
 ### Ajouté

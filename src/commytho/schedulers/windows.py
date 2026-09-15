@@ -13,6 +13,11 @@ un portable débranché, cela veut dire zéro commit, sans le moindre message.
 La tâche porte deux déclencheurs : la répétition régulière, et l'ouverture de
 session. Le second sert au rattrapage : à l'allumage de la machine, commytho
 regarde le programme du jour sans attendre le prochain réveil périodique.
+
+La tâche est marquée masquée et l'action pointe pythonw.exe, qui n'ouvre pas de
+console. Les processus git lancés ensuite le sont sans fenêtre non plus, voir
+le module console : sans cela, chaque commit ferait clignoter une fenêtre noire
+au premier plan et volerait le focus de la fenêtre en cours.
 """
 
 from __future__ import annotations
@@ -72,6 +77,9 @@ def _definition_xml(tick_minutes: int) -> str:
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <StartWhenAvailable>true</StartWhenAvailable>
     <Enabled>true</Enabled>
+    <Hidden>true</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
     <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
   </Settings>
   <Triggers>

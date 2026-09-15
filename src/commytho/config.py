@@ -39,6 +39,11 @@ class Schedule:
     # Créneaux en retard rejoués à chaque réveil. 1 garde le rythme crédible
     # après une longue absence ; 0 rattrape tout le programme manqué d'un coup.
     catch_up: int = 1
+    # Nombre de journées passées reprises au réveil. 0 s'en tient au jour
+    # courant, ce qui était le seul comportement possible jusqu'ici. Au-delà,
+    # une machine restée éteinte plusieurs jours rattrape les programmes
+    # manqués, chaque commit gardant la date de son créneau d'origine.
+    catch_up_days: int = 0
 
     def describe(self) -> str:
         """Résumé sur une ligne, utilisé par la commande status."""
@@ -49,6 +54,14 @@ class Schedule:
             f"les jours suivants : {jours} (plafond {self.cap_per_day})"
             f", rattrapage : {self.describe_catch_up()}"
         )
+
+    def describe_backfill(self) -> str:
+        """Politique de reprise des journées passées, en clair."""
+        if self.catch_up_days <= 0:
+            return "aucune"
+        if self.catch_up_days == 1:
+            return "la veille"
+        return f"les {self.catch_up_days} derniers jours"
 
     def describe_catch_up(self) -> str:
         """Politique de rattrapage, en clair."""
@@ -105,6 +118,9 @@ class Config:
     author: Author = field(default_factory=Author)
     schedule: Schedule = field(default_factory=Schedule)
     target_file: str = "journal.md"
+    # Longueur au-delà de laquelle le fichier suivi laisse la place au suivant :
+    # journal.md, puis journal-2.md, et ainsi de suite. 0 désactive la rotation.
+    max_lines_per_file: int = 1000
     installed: Installed = field(default_factory=Installed)
 
     @property
@@ -130,6 +146,7 @@ def _from_dict(raw: dict[str, Any]) -> Config:
         author=Author(**keep(Author, raw.get("author", {}))),
         schedule=Schedule(**keep(Schedule, raw.get("schedule", {}))),
         target_file=raw.get("target_file", "journal.md"),
+        max_lines_per_file=raw.get("max_lines_per_file", 1000),
         installed=Installed(**keep(Installed, raw.get("installed", {}))),
     )
 

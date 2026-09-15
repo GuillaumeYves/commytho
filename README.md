@@ -81,6 +81,9 @@ Pour tout effacer : `commytho logout`.
 | `--window`               | `09:00-19:00` | plage horaire, à l'heure locale de la machine                |
 | `--max N`                | `20`          | plafond quotidien, quoi qu'il arrive                          |
 | `--tick MINUTES`         | `30`          | fréquence de réveil du planificateur                        |
+| `--rattrapage N`         | `1`           | créneaux en retard rejoués par réveil,`0` pour tous         |
+| `--rattrapage-jours N`   | `0`           | journées passées reprises à la réouverture de session        |
+| `--max-lines N`          | `1000`        | longueur au-delà de laquelle le fichier suivi laisse la place |
 | `--messages FICHIER`     | liste interne   | vos propres messages de commit, un par ligne                  |
 | `--dry-run`              |                 | affiche le programme prévu sans rien installer               |
 
@@ -103,9 +106,46 @@ la même minute tout en gardant un rythme irrégulier.
 Si la machine était éteinte et que plusieurs créneaux sont en retard, commytho
 n'en rattrape qu'un seul, le plus récent, et abandonne les autres. Repousser six
 commits d'un coup après un week-end serait exactement le contraire du but.
+`--rattrapage 0` renverse ce choix et rejoue tout le programme manqué du jour,
+ce qui convient quand la machine n'est allumée qu'une partie de la journée.
 
 Le plafond de vingt commits par jour est là pour la même raison. Vous pouvez le
 relever, l'outil vous dira simplement ce qu'il en pense.
+
+Poser la tâche ne réécrit pas le passé : les créneaux du jour déjà écoulés sont
+comptés comme honorés. Changer de rythme à midi ne déclenche donc pas une salve
+rétroactive, la journée en cours part de l'heure de la pose.
+
+## Une machine éteinte plusieurs jours
+
+Par défaut, une journée manquée est une journée perdue : au réveil suivant,
+commytho ne regarde que le jour courant.
+
+`--rattrapage-jours N` remonte plus loin. À la réouverture de session, commytho
+reprend les programmes des N derniers jours et pousse tout ce qui n'a pas été
+fait. Chaque commit garde la date et l'heure de son créneau d'origine, pas
+celles du réveil : un vendredi rattrapé le lundi reste daté du vendredi.
+
+```sh
+commytho up --rattrapage 0 --rattrapage-jours 7
+```
+
+La remontée s'arrête à la date de pose de la tâche. Une installation toute
+neuve n'invente donc pas une semaine d'activité à son premier réveil.
+
+## Quand le journal s'allonge
+
+Passé mille lignes, commytho laisse `journal.md` tranquille et ouvre
+`journal-2.md`, puis `journal-3.md`. Un fichier qui grossit sans fin finit par
+peser dans chaque diff et devient pénible à ouvrir sur GitHub.
+
+Le numéro en cours se lit dans le dépôt lui-même, pas dans un fichier d'état :
+effacer l'état local, ou installer commytho sur une seconde machine, ne fait
+pas repartir la rotation en arrière. `commytho status` affiche le fichier
+réellement alimenté.
+
+Le seuil se règle avec `--max-lines`, et `--max-lines 0` désactive la
+rotation.
 
 ## Le planificateur, système par système
 
@@ -154,6 +194,10 @@ commytho run --force --verbose
 ```
 
 **Le jeton a expiré.** `commytho login` à nouveau, le jeton est remplacé.
+
+**Une fenêtre noire apparaît à chaque commit.** Elle ne devrait plus. Si vous
+venez d'une version antérieure à la 1.1.0, la tâche posée à l'époque est restée
+telle quelle : relancez `commytho up` pour la remplacer.
 
 ## Développement
 

@@ -15,10 +15,11 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from . import messages, paths
 from .config import Config
+from .console import NO_WINDOW
 
 TOKEN_ENV = "COMMYTHO_GIT_TOKEN"
 
@@ -57,6 +58,9 @@ def run_git(args: list[str], cwd: Path | None = None, token: str | None = None) 
         text=True,
         encoding="utf-8",
         errors="replace",
+        # git est une application console : lancé depuis pythonw, qui n'a pas de
+        # console, il en ferait apparaître une à chaque appel.
+        creationflags=NO_WINDOW,
     )
     if resultat.returncode != 0:
         sortie = (resultat.stderr or resultat.stdout or "").strip()
@@ -179,17 +183,15 @@ def _supprime_arborescence(chemin: Path) -> None:
 
 def make_commit(config: Config, token: str, jour: date, creneau: str, message: str) -> str:
     """Commite un seul créneau. Raccourci sur make_commits."""
-    return make_commits(config, token, jour, [(creneau, message)])[0]
+    return make_commits(config, token, [(jour, creneau, message)])[0]
 
 
-def make_commits(
-    config: Config, token: str, jour: date, creneaux: list[tuple[str, str]]
-) -> list[str]:
+def make_commits(config: Config, token: str, creneaux: list[tuple[date, str, str]]) -> list[str]:
     """Commite une série de créneaux, pousse une fois, renvoie les hashs courts.
 
-    La date de chaque commit est celle de son créneau, pas celle du réveil. Un
-    rattrapage après une machine éteinte reste donc cohérent avec le programme
-    du jour, même si les quarante commits partent dans la même seconde.
+    Chaque entrée porte sa propre date : un réveil peut donc solder à la fois
+    les créneaux du jour et ceux des journées manquées, chaque commit gardant
+    l'horodatage de son créneau d'origine plutôt que celui du réveil.
 
     Le push est fait une seule fois, à la fin : rattraper un week-end éteint ne
     doit pas ouvrir quarante connexions à GitHub.
@@ -198,23 +200,91 @@ def make_commits(
         return []
 
     checkout = ensure_checkout(config, token)
-    cible = checkout / config.target_file
-    cible.parent.mkdir(parents=True, exist_ok=True)
-
-    if not cible.exists():
-        cible.write_text(messages.journal_header(), encoding="utf-8")
+    journal = Journal(checkout, config.target_file, config.max_lines_per_file)
 
     empreintes: list[str] = []
-    for creneau, message in creneaux:
-        with cible.open("a", encoding="utf-8") as fichier:
-            fichier.write(messages.journal_line(jour, creneau, message))
+    for jour, creneau, message in creneaux:
+        suivi = journal.append(messages.journal_line(jour, creneau, message))
         with _dates_git(_iso_local(jour, creneau)):
-            run_git(["add", "--", config.target_file], cwd=checkout)
+            run_git(["add", "--", suivi], cwd=checkout)
             run_git(["commit", "-m", message], cwd=checkout)
         empreintes.append(run_git(["rev-parse", "--short", "HEAD"], cwd=checkout))
 
     run_git(["push", "origin", f"HEAD:{config.repo.branch}"], cwd=checkout, token=token)
     return empreintes
+
+
+class Journal:
+    """Le fichier alimenté dans le dépôt, et sa rotation quand il devient long.
+
+    Un journal qui grossit sans fin finit par peser dans chaque diff et devient
+    pénible à ouvrir sur GitHub. Passé le seuil, commytho ouvre le suivant :
+    journal.md, puis journal-2.md, puis journal-3.md.
+
+    Le numéro en cours est déduit des fichiers présents dans le dépôt, sans
+    rien stocker à côté. Perdre le fichier d'état, ou installer commytho sur
+    une seconde machine, ne fait donc pas repartir la rotation en arrière.
+    """
+
+    def __init__(self, checkout: Path, base: str, max_lignes: int) -> None:
+        self.checkout = checkout
+        self.base = base
+        self.max_lignes = max_lignes
+        self.index = _dernier_index(checkout, base)
+        self.chemin = checkout / _nom_indexe(base, self.index)
+        self.lignes = _compte_lignes(self.chemin)
+
+    def append(self, ligne: str) -> str:
+        """Ajoute une ligne et renvoie le chemin du fichier touché, relatif au dépôt."""
+        if self.max_lignes > 0 and self.lignes >= self.max_lignes:
+            self.index += 1
+            self.chemin = self.checkout / _nom_indexe(self.base, self.index)
+            self.lignes = _compte_lignes(self.chemin)
+
+        if not self.chemin.exists():
+            self.chemin.parent.mkdir(parents=True, exist_ok=True)
+            entete = messages.journal_header(self.index)
+            self.chemin.write_text(entete, encoding="utf-8")
+            self.lignes = entete.count("\n")
+
+        with self.chemin.open("a", encoding="utf-8") as fichier:
+            fichier.write(ligne)
+        self.lignes += ligne.count("\n")
+        return self.chemin.relative_to(self.checkout).as_posix()
+
+
+def _nom_indexe(base: str, index: int) -> str:
+    """journal.md pour le premier fichier, journal-2.md pour le deuxième, etc."""
+    if index <= 1:
+        return base
+    chemin = PurePosixPath(base.replace("\\", "/"))
+    return str(chemin.with_name(f"{chemin.stem}-{index}{chemin.suffix}"))
+
+
+def _dernier_index(checkout: Path, base: str) -> int:
+    """Numéro du dernier fichier de la série présent dans le dépôt."""
+    index = 1
+    while (checkout / _nom_indexe(base, index + 1)).exists():
+        index += 1
+    return index
+
+
+def _compte_lignes(chemin: Path) -> int:
+    if not chemin.exists():
+        return 0
+    with chemin.open("r", encoding="utf-8", errors="replace") as fichier:
+        return sum(1 for _ in fichier)
+
+
+def active_target(config: Config, checkout: Path | None = None) -> str:
+    """Fichier actuellement alimenté, pour l'affichage de la commande status."""
+    dossier = checkout or paths.checkout_dir()
+    if not dossier.exists():
+        return config.target_file
+    journal = Journal(dossier, config.target_file, config.max_lines_per_file)
+    if config.max_lines_per_file > 0 and journal.lignes >= config.max_lines_per_file:
+        return _nom_indexe(config.target_file, journal.index + 1)
+    return _nom_indexe(config.target_file, journal.index)
 
 
 @contextmanager

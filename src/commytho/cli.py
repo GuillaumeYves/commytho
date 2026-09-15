@@ -216,6 +216,10 @@ def cmd_up(args: argparse.Namespace) -> int:
             planning.tick_minutes = max(1, args.tick)
         if args.rattrapage is not None:
             planning.catch_up = max(0, args.rattrapage)
+        if args.rattrapage_jours is not None:
+            planning.catch_up_days = max(0, args.rattrapage_jours)
+        if args.max_lines is not None:
+            configuration.max_lines_per_file = max(0, args.max_lines)
     except conf.ConfigError as exc:
         return erreur(str(exc))
 
@@ -239,6 +243,14 @@ def cmd_up(args: argparse.Namespace) -> int:
 
     print(f"Rythme retenu : {planning.describe()}")
     print(f"Réveil du planificateur toutes les {planning.tick_minutes} minutes.")
+    print(
+        f"Journées passées reprises à la réouverture de session : {planning.describe_backfill()}."
+    )
+    if configuration.max_lines_per_file > 0:
+        print(
+            f"Le fichier suivi laisse la place au suivant passé "
+            f"{configuration.max_lines_per_file} lignes."
+        )
     print()
     _affiche_apercu(configuration, jours=7)
 
@@ -259,12 +271,38 @@ def cmd_up(args: argparse.Namespace) -> int:
         installed_at=datetime.now().isoformat(timespec="seconds"),
     )
     conf.save(configuration)
-    journalise(f"up : {scheduler.kind} {identifiant}, {planning.describe()}")
+    _neutralise_le_passe(configuration)
+    journalise(
+        f"up : {scheduler.kind} {identifiant}, {planning.describe()}"
+        f", reprise : {planning.describe_backfill()}"
+    )
 
     print()
     print(f"commytho est en route ({scheduler.kind} : {identifiant}).")
     print("Pour tout arrêter : commytho down")
     return 0
+
+
+def _neutralise_le_passe(configuration: conf.Config) -> None:
+    """Marque comme honorés les créneaux du jour déjà écoulés.
+
+    Changer de rythme ne doit pas produire une salve rétroactive : un up posé à
+    midi sur une plage matinale rattraperait sinon toute la matinée dans la
+    minute qui suit, et le nouveau rythme commencerait par le démentir. La
+    journée en cours part donc de l'heure de la pose, les suivantes sont
+    complètes.
+    """
+    aujourdhui = date.today()
+    programme = planner.plan_for_day(
+        configuration.schedule, aujourdhui, configuration.repo.full_name
+    )
+    etat = state.roll_over(
+        state.load(), aujourdhui, programme, configuration.schedule.catch_up_days
+    )
+    ecoules = planner.due_slots(programme, etat.done, datetime.now().strftime("%H:%M"))
+    if ecoules:
+        etat.done.extend(ecoules)
+    state.save(etat)
 
 
 def cmd_down(args: argparse.Namespace) -> int:
@@ -305,12 +343,19 @@ def cmd_status(args: argparse.Namespace) -> int:
             f"(branche {configuration.repo.branch}"
             f"{', privé' if configuration.repo.private else ''})"
         )
-        print(f"Fichier suivi : {configuration.target_file}")
+        actif = repo.active_target(configuration)
+        rotation = (
+            f", rotation tous les {configuration.max_lines_per_file} lignes"
+            if configuration.max_lines_per_file > 0
+            else ""
+        )
+        print(f"Fichier suivi : {actif}{rotation}")
     else:
         print("Dépôt         : non configuré")
     if configuration.author.email:
         print(f"Auteur        : {configuration.author.name} <{configuration.author.email}>")
     print(f"Rythme        : {configuration.schedule.describe()}")
+    print(f"Reprise       : {configuration.schedule.describe_backfill()}")
 
     try:
         scheduler = get_scheduler()
@@ -377,68 +422,120 @@ def cmd_run(args: argparse.Namespace) -> int:
         journalise(f"run : {exc}")
         return erreur(str(exc))
 
+    planning = configuration.schedule
+    depot = configuration.repo.full_name
     aujourdhui = date.today()
     maintenant = datetime.now().strftime("%H:%M")
-    programme = planner.plan_for_day(
-        configuration.schedule, aujourdhui, configuration.repo.full_name
-    )
+    programme = planner.plan_for_day(planning, aujourdhui, depot)
 
-    etat = state.roll_over(state.load(), aujourdhui, programme)
+    etat = state.roll_over(state.load(), aujourdhui, programme, planning.catch_up_days)
 
     # Avec --force, on commite tout de suite, ce qui sert à vérifier une
     # installation sans attendre le prochain créneau.
-    creneaux = [maintenant] if args.force else planner.due_slots(programme, etat.done, maintenant)
+    if args.force:
+        a_faire = [(aujourdhui, maintenant)]
+    else:
+        # Les journées passées d'abord : une machine rallumée après plusieurs
+        # jours solde d'abord son arriéré, puis reprend le fil du jour.
+        a_faire = planner.backlog(
+            planning, depot, etat.history, aujourdhui, _pose_le(configuration)
+        )
+        du_jour = _creneaux_du_jour(planning, programme, etat, maintenant)
+        a_faire += [(aujourdhui, creneau) for creneau in du_jour]
 
-    if not creneaux:
+    if not a_faire:
         state.save(etat)
         if args.verbose:
             print("Rien à faire pour le moment.")
         return 0
 
-    restant = configuration.schedule.cap_per_day - len(etat.done)
-    if restant <= 0:
-        journalise(f"run : plafond du jour atteint ({configuration.schedule.cap_per_day})")
-        state.save(etat)
-        return 0
-
-    # Politique de rattrapage. Par défaut on ne commite que le créneau le plus
-    # récent et on abandonne les autres : rejouer six commits d'un coup après un
-    # week-end machine éteinte serait le contraire du but recherché. Avec
-    # --rattrapage 0, tout le programme manqué est rejoué, ce qui convient quand
-    # la machine n'est allumée qu'une partie de la journée.
-    rattrapage = configuration.schedule.catch_up
-    limite = len(creneaux) if rattrapage <= 0 else rattrapage
-    limite = max(1, min(limite, restant))
-
-    abandonnes = creneaux[:-limite]
-    retenus = creneaux[-limite:]
-    if abandonnes:
-        etat.done.extend(abandonnes)
-        journalise(f"run : créneaux passés abandonnés ({', '.join(abandonnes)})")
-
     pool = messages.load_pool(args.messages)
-    a_commiter = [(creneau, messages.pick(pool, aujourdhui, creneau)) for creneau in retenus]
+    entrees = [(jour, creneau, messages.pick(pool, jour, creneau)) for jour, creneau in a_faire]
 
     try:
-        empreintes = repo.make_commits(configuration, token, aujourdhui, a_commiter)
+        empreintes = repo.make_commits(configuration, token, entrees)
     except repo.GitError as exc:
         journalise(f"run : échec du commit ({exc})")
         return erreur(str(exc))
 
     if not args.force:
-        etat.done.extend(retenus)
+        for jour, creneau in a_faire:
+            state.record(etat, jour, [creneau])
     etat.total_commits += len(empreintes)
     etat.last_run = datetime.now().isoformat(timespec="seconds")
     state.save(etat)
 
-    if len(empreintes) == 1:
-        resume = f"commit {empreintes[0]} pour le créneau {retenus[0]} ({a_commiter[0][1]})"
-    else:
-        resume = f"{len(empreintes)} commits rattrapés, de {retenus[0]} à {retenus[-1]}"
+    resume = _resume(a_faire, entrees, empreintes, aujourdhui)
     journalise(f"run : {resume}")
     if args.verbose or args.force:
-        print(f"{resume.capitalize()}, poussé vers {configuration.repo.full_name}")
+        print(f"{resume.capitalize()}, poussé vers {depot}")
     return 0
+
+
+def _creneaux_du_jour(
+    planning: conf.Schedule, programme: list[str], etat: state.State, maintenant: str
+) -> list[str]:
+    """Créneaux du jour à honorer maintenant, plafond et rattrapage appliqués.
+
+    Par défaut on ne commite que le créneau le plus récent et on abandonne les
+    autres : rejouer six commits d'un coup après un week-end machine éteinte
+    serait le contraire du but recherché. Avec --rattrapage 0, tout le
+    programme manqué est rejoué, ce qui convient quand la machine n'est allumée
+    qu'une partie de la journée.
+    """
+    dus = planner.due_slots(programme, etat.done, maintenant)
+    if not dus:
+        return []
+
+    restant = planning.cap_per_day - len(etat.done)
+    if restant <= 0:
+        journalise(f"run : plafond du jour atteint ({planning.cap_per_day})")
+        return []
+
+    limite = len(dus) if planning.catch_up <= 0 else planning.catch_up
+    limite = max(1, min(limite, restant))
+
+    abandonnes = dus[:-limite]
+    if abandonnes:
+        etat.done.extend(abandonnes)
+        journalise(f"run : créneaux passés abandonnés ({', '.join(abandonnes)})")
+    return dus[-limite:]
+
+
+def _pose_le(configuration: conf.Config) -> date | None:
+    """Date de pose de la tâche, borne au-delà de laquelle on ne remonte pas.
+
+    Sans cette borne, une installation toute neuve avec un rattrapage de sept
+    jours inventerait une semaine d'activité au premier réveil.
+    """
+    horodatage = configuration.installed.installed_at
+    if not horodatage:
+        return None
+    try:
+        return datetime.fromisoformat(horodatage).date()
+    except ValueError:
+        return None
+
+
+def _resume(
+    a_faire: list[tuple[date, str]],
+    entrees: list[tuple[date, str, str]],
+    empreintes: list[str],
+    aujourdhui: date,
+) -> str:
+    """Une ligne de journal qui dise ce qui vient d'être poussé."""
+    if len(empreintes) == 1:
+        jour, creneau = a_faire[0]
+        quand = creneau if jour == aujourdhui else f"{jour.isoformat()} {creneau}"
+        return f"commit {empreintes[0]} pour le créneau {quand} ({entrees[0][2]})"
+
+    journees = sorted({jour for jour, _ in a_faire})
+    if len(journees) == 1:
+        return f"{len(empreintes)} commits rattrapés, de {a_faire[0][1]} à {a_faire[-1][1]}"
+    return (
+        f"{len(empreintes)} commits rattrapés sur {len(journees)} journées, "
+        f"du {journees[0].isoformat()} au {journees[-1].isoformat()}"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -485,6 +582,20 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         metavar="N",
         help="créneaux en retard rejoués par réveil (0 pour tous)",
+    )
+    p_up.add_argument(
+        "--rattrapage-jours",
+        type=int,
+        metavar="N",
+        dest="rattrapage_jours",
+        help="journées passées reprises à la réouverture de session (0 pour aucune)",
+    )
+    p_up.add_argument(
+        "--max-lines",
+        type=int,
+        metavar="N",
+        dest="max_lines",
+        help="longueur au-delà de laquelle le fichier suivi laisse la place au suivant",
     )
     p_up.add_argument("--messages", metavar="FICHIER", help="liste de messages, un par ligne")
     p_up.add_argument("--dry-run", action="store_true", help="afficher sans rien installer")

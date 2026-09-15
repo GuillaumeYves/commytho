@@ -83,8 +83,12 @@ def journal_line(jour: date, creneau: str, message: str) -> str:
     return f"- {jour.isoformat()} {creneau} : {message}\n"
 
 
-def journal_header() -> str:
-    """En-tête écrit à la création du fichier suivi."""
-    return (
-        "# Journal\n\nFichier tenu par commytho. Chaque ligne correspond à un créneau planifié.\n\n"
-    )
+def journal_header(index: int = 1) -> str:
+    """En-tête écrit à la création d'un fichier suivi.
+
+    L'index apparaît dans le titre dès le deuxième fichier, pour qu'un journal
+    ouvert seul indique tout de suite où il se situe dans la série.
+    """
+    titre = "# Journal" if index <= 1 else f"# Journal, suite {index}"
+    corps = "Fichier tenu par commytho. Chaque ligne correspond à un créneau planifié."
+    return f"{titre}\n\n{corps}\n\n"

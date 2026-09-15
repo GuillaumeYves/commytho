@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from ..console import NO_WINDOW
+
 
 class SchedulerError(Exception):
     """La pose ou le retrait de la tâche a échoué."""
@@ -54,7 +56,12 @@ def tick_command() -> list[str]:
 def run(commande: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
     """Petit utilitaire partagé pour appeler les outils du système."""
     resultat = subprocess.run(  # noqa: S603 - arguments construits par nos soins
-        commande, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        commande,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=NO_WINDOW,
     )
     if check and resultat.returncode != 0:
         sortie = (resultat.stderr or resultat.stdout or "").strip()

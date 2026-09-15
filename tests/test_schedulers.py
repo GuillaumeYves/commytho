@@ -92,3 +92,26 @@ def test_le_xml_de_la_tache_pointe_le_bon_interpreteur():
     # chaîne : pas de guillemets à ajouter autour du chemin.
     assert f"<Command>{executable}</Command>" in definition
     assert f"<Arguments>{' '.join(arguments)}</Arguments>" in definition
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="spécifique à Windows")
+def test_le_xml_de_la_tache_masque_la_fenetre():
+    from commytho.schedulers.windows import _definition_xml
+
+    definition = _definition_xml(30)
+    # Une salve de commits ne doit pas faire clignoter la moindre fenêtre au
+    # premier plan, ni voler le focus de ce que l'on est en train de faire.
+    assert "<Hidden>true</Hidden>" in definition
+
+
+def test_les_processus_enfants_nouvrent_pas_de_console():
+    import subprocess
+
+    from commytho.console import NO_WINDOW
+
+    if sys.platform == "win32":
+        assert NO_WINDOW == subprocess.CREATE_NO_WINDOW
+    else:
+        # Ailleurs l'indicateur n'existe pas, et subprocess refuse toute valeur
+        # non nulle : la valeur neutre est la seule acceptable.
+        assert NO_WINDOW == 0
