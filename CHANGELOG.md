@@ -30,6 +30,12 @@ numéros suivent [SemVer](https://semver.org/lang/fr/).
 - `make_commits` rend la liste des commits réellement posés, créneau compris,
   plutôt que des empreintes seules. Les comptes rendus disent donc ce qui a
   été fait plutôt que ce qui avait été demandé.
+- Les messages de commit par défaut sont ponctués. L'ordre et la longueur de la
+  liste n'ont pas bougé : un créneau retombe sur le même message qu'avant, avec
+  son point.
+- La publication est rejouable. Un tag redéplacé refaisait échouer le workflow
+  sur un numéro déjà pris ; l'envoi ignore désormais ce qui est déjà en ligne,
+  et la release GitHub est mise à jour plutôt que recréée.
 
 ## [1.1.0] - 2026-09-15
 

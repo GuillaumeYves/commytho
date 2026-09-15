@@ -55,8 +55,14 @@ def test_le_workflow_demande_le_droit_decrire(configuration):
 
 
 def test_le_fuseau_nest_pose_que_sil_est_connu(configuration):
-    assert "TZ:" not in workflow.render(configuration)
-    assert "TZ: Europe/Paris" in workflow.render(configuration, timezone="Europe/Paris")
+    sans = workflow.render(configuration)
+    assert "TZ:" not in sans
+    # Une cle env sans valeur ferait refuser le fichier par GitHub : le bloc
+    # entier doit disparaitre avec le fuseau.
+    assert "env:" not in sans
+    avec = workflow.render(configuration, timezone="Europe/Paris")
+    assert "        env:" in avec
+    assert "          TZ: Europe/Paris" in avec
 
 
 def test_les_jours_sont_rendus_dans_la_forme_attendue_par_les_options(configuration):

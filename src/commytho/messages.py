@@ -6,6 +6,10 @@ doublons bizarres dans l'historique.
 
 Vous pouvez remplacer entièrement cette liste avec un fichier texte, une ligne
 par message, passé à l'option --messages de la commande up.
+
+L'ordre et la longueur de la liste comptent : le tirage retient une position,
+pas un texte. Ajouter un message au milieu décale tout ce qui suit et change
+les messages que les prochains créneaux obtiendront.
 """
 
 from __future__ import annotations
@@ -15,47 +19,47 @@ from datetime import date
 from pathlib import Path
 
 MESSAGES = [
-    "Petite mise à jour du journal",
-    "Note du jour",
-    "Ajout d'une entrée",
-    "Mise à jour des notes",
-    "Journal : entrée du jour",
-    "Complète le journal",
-    "Relecture rapide",
-    "Ajuste la mise en forme",
-    "Range une ligne au bon endroit",
-    "Continue le suivi",
-    "Point d'étape",
-    "Ajoute un repère de date",
-    "Tient le journal à jour",
-    "Nettoie une coquille",
-    "Consigne l'avancement",
-    "Reprend le fil",
-    "Note de suivi",
-    "Trace du passage du jour",
+    "Petite mise à jour du journal.",
+    "Note du jour.",
+    "Ajout d'une entrée.",
+    "Mise à jour des notes.",
+    "Journal : entrée du jour.",
+    "Complète le journal.",
+    "Relecture rapide.",
+    "Ajuste la mise en forme.",
+    "Range une ligne au bon endroit.",
+    "Continue le suivi.",
+    "Point d'étape.",
+    "Ajoute un repère de date.",
+    "Tient le journal à jour.",
+    "Nettoie une coquille.",
+    "Consigne l'avancement.",
+    "Reprend le fil.",
+    "Note de suivi.",
+    "Trace du passage du jour.",
     # Quelques messages plus légers. Le journal n'a pas à être solennel, et un
     # historique entièrement composé de phrases neutres finit par se voir
     # autant qu'un historique trop régulier.
-    "Commit avant d'oublier",
-    "Le café a fini par faire effet",
-    "Une ligne pour la route",
-    "Je note, donc je suis",
-    "Le futur moi comprendra",
-    "Trois mots et au lit",
-    "Rien de cassé, promis",
-    "Déplace une virgule, change le monde",
-    "Ça tenait dans la marge",
-    "Petit commit entre amis",
-    "On verra ça demain",
-    "Encore une idée attrapée au vol",
-    "Le journal ne s'écrit pas tout seul",
-    "Un jour de plus, une ligne de plus",
-    "Écrit d'une main, café dans l'autre",
-    "Ceci méritait bien une ligne",
-    "Rangement de fin de journée",
-    "Noté avant que ça s'envole",
-    "Deux minutes bien employées",
-    "La suite au prochain épisode",
+    "Commit avant d'oublier.",
+    "Le café a fini par faire effet.",
+    "Une ligne pour la route.",
+    "Je note, donc je suis.",
+    "Le futur moi comprendra.",
+    "Trois mots, et au lit.",
+    "Rien de cassé, promis.",
+    "Déplace une virgule, change le monde.",
+    "Ça tenait dans la marge.",
+    "Petit commit entre amis.",
+    "On verra ça demain.",
+    "Encore une idée attrapée au vol.",
+    "Le journal ne s'écrit pas tout seul.",
+    "Un jour de plus, une ligne de plus.",
+    "Écrit d'une main, café dans l'autre.",
+    "Ceci méritait bien une ligne.",
+    "Rangement de fin de journée.",
+    "Noté avant que ça s'envole.",
+    "Deux minutes bien employées.",
+    "La suite au prochain épisode...",
 ]
 
 

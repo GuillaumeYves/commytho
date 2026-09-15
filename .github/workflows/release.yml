@@ -88,7 +88,12 @@ jobs:
         with:
           name: dist
           path: dist/
+      # Un tag redéplacé rejoue tout le workflow. Sans skip-existing, l'envoi
+      # d'un numéro déjà pris ferait échouer la publication, alors qu'il n'y a
+      # rien à faire : les archives sont identiques.
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
 
   annonce:
     name: Release GitHub
@@ -102,10 +107,16 @@ jobs:
         with:
           name: dist
           path: dist/
+      # Idem : si la release existe déjà, on remet les archives à jour
+      # plutôt que de faire échouer le workflow.
       - name: Crée la release et y attache les archives
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi

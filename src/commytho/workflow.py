@@ -60,7 +60,9 @@ def render(
     """Compose le fichier de workflow à déposer dans le dépôt cible."""
     planning = config.schedule
     auteur = f"{config.author.name} <{config.author.email}>"
-    env = f"          TZ: {timezone}\n" if timezone else ""
+    # Le bloc env ne sort que s'il a quelque chose à contenir : une clé env
+    # sans valeur ferait refuser le fichier par GitHub.
+    env = f"        env:\n          TZ: {timezone}\n" if timezone else ""
     note_tz = (
         ""
         if timezone
@@ -105,7 +107,6 @@ jobs:
       - name: Installe commytho
         run: python -m pip install --quiet "commytho @ {source}"
       - name: Tient le journal
-        env:
 {env}        run: >
           commytho ci --verbose
           --repo {config.repo.full_name}
