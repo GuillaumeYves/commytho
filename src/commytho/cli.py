@@ -479,8 +479,8 @@ def cmd_github(args: argparse.Namespace) -> int:
         return 0
 
     print(f"Workflow posé dans {configuration.repo.full_name} ({workflow.WORKFLOW_PATH}).")
-    cron = workflow.cron_apres(configuration.schedule.window_end)
-    print(f"Visite quotidienne : cron {cron} UTC.")
+    crons = workflow.crons_quotidiens(configuration)
+    print(f"Visites : cron {' et '.join(crons)} UTC.")
     if not args.tz:
         print()
         print("Aucun fuseau précisé : les commits porteront l'heure UTC du runner.")

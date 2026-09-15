@@ -26,15 +26,40 @@ def configuration():
     return reglage
 
 
-def test_la_visite_tombe_apres_la_fermeture_de_la_plage():
+def test_la_visite_tombe_apres_la_fermeture_de_la_plage(configuration):
     # Trois heures de marge : GitHub interprète le cron en UTC, et décale
     # volontiers ses tâches planifiées de plusieurs dizaines de minutes.
-    assert workflow.cron_apres("08:00") == "0 11 * * *"
-    assert workflow.cron_apres("19:00") == "0 22 * * *"
+    heures = [expression.split()[1] for expression in workflow.crons_quotidiens(configuration)]
+    assert heures[0] == "11"
 
 
-def test_une_plage_qui_finit_tard_repasse_par_minuit():
-    assert workflow.cron_apres("23:00") == "0 2 * * *"
+def test_il_y_a_deux_passages_par_jour(configuration):
+    crons = workflow.crons_quotidiens(configuration)
+    # Une visite retardée ne se voit pas, une visite sautée laisse un trou :
+    # le second passage est l'assurance contre le second cas.
+    assert len(crons) == 2
+    premiere, seconde = (int(expression.split()[1]) for expression in crons)
+    assert (premiere + 8) % 24 == seconde
+
+
+def test_aucune_visite_a_lheure_ronde(configuration):
+    # La minute zéro est celle que tout le monde demande, donc la plus
+    # retardée. GitHub le dit lui-même dans sa documentation.
+    for expression in workflow.crons_quotidiens(configuration):
+        assert expression.split()[0] != "0"
+
+
+def test_la_minute_est_stable_et_propre_au_depot():
+    premiere = workflow.minute_de_visite("alice/journal")
+    assert premiere == workflow.minute_de_visite("alice/journal")
+    assert premiere != workflow.minute_de_visite("bob/journal")
+    assert 1 <= premiere <= 59
+
+
+def test_une_plage_qui_finit_tard_repasse_par_minuit(configuration):
+    configuration.schedule.window_end = "23:00"
+    heures = [expression.split()[1] for expression in workflow.crons_quotidiens(configuration)]
+    assert heures[0] == "2"
 
 
 def test_le_workflow_reprend_le_rythme_configure(configuration):

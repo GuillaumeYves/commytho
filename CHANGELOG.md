@@ -5,6 +5,15 @@ numéros suivent [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Corrigé
+
+- Le workflow passait une fois par jour, à l'heure ronde. C'est le créneau que
+  GitHub documente comme le plus retardé, celui que tout le monde demande, et
+  une exécution planifiée peut y être sautée sans un mot. Il y a désormais deux
+  passages, à une minute tirée du nom du dépôt, jamais la minute zéro. Un
+  passage sauté ne laisse plus de trou : le suivant reprend ce qui manque, et
+  une visite qui n'a rien à faire ne coûte que quelques secondes de runner.
+
 ## [1.2.0] - 2026-09-15
 
 ### Ajouté

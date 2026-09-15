@@ -176,11 +176,18 @@ github` dépose dans le dépôt cible un workflow qui prend le relais :
 commytho github --tz Europe/Paris
 ```
 
-Une visite par jour, après la fermeture de la plage horaire. Elle pose d'un
-coup les commits du programme du jour et reprend au passage les journées
-restées vides. Chaque commit garde la date et l'heure de son créneau, pas
-celles de la visite : que GitHub arrive avec une demi-heure de retard, ce qui
-arrive souvent, ne se voit nulle part.
+Deux visites par jour, après la fermeture de la plage horaire. Chacune pose
+les commits du programme du jour et reprend au passage les journées restées
+vides. Chaque commit garde la date et l'heure de son créneau, pas celles de la
+visite : que GitHub arrive avec une heure de retard, ce qui arrive souvent, ne
+se voit nulle part.
+
+Pourquoi deux. GitHub retarde les tâches planifiées quand la charge est forte,
+et lui arrive d'en sauter, sans rien signaler. Un retard ne se voit pas ici,
+mais une exécution sautée laisserait un trou. Comme une visite qui n'a rien à
+faire ne coûte que quelques secondes, la seconde est une assurance bon marché.
+Pour la même raison, l'heure choisie n'est jamais l'heure ronde, qui est le
+créneau le plus demandé donc le plus retardé.
 
 Le workflow reprend le rythme de votre configuration. Après un `commytho up`,
 reposez-le pour qu'il suive.

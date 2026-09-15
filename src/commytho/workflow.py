@@ -6,11 +6,17 @@ programme avec l'horodatage de leur créneau. Un réveil en retard ne se voit
 donc pas, ce qui tombe bien : GitHub décale volontiers les tâches planifiées de
 plusieurs dizaines de minutes, et en saute parfois.
 
-Le créneau cron est calculé avec trois heures de marge après la fin de la plage,
-et interprété par GitHub en UTC. Plutôt que de deviner le décalage de la machine
-et de le voir changer deux fois par an, on laisse la marge absorber l'écart : la
-reprise des journées passées rattrape de toute façon ce qu'une visite mal tombée
-aurait laissé.
+Les créneaux cron sont calculés avec trois heures de marge après la fin de la
+plage, et interprétés par GitHub en UTC. Plutôt que de deviner le décalage de la
+machine et de le voir changer deux fois par an, on laisse la marge absorber
+l'écart : la reprise des journées passées rattrape de toute façon ce qu'une
+visite mal tombée aurait laissé.
+
+Il y a deux passages par jour, et jamais à l'heure ronde. GitHub retarde les
+tâches planifiées quand la charge est forte, et en saute ; la minute zéro est
+justement celle que tout le monde demande. Une visite qui n'a rien à faire ne
+coûte que quelques secondes, le second passage est donc une assurance bon
+marché.
 
 Le workflow ne demande aucun secret. actions/checkout laisse ses identifiants
 dans la copie, et la permission contents: write suffit à pousser. Les commits
@@ -24,6 +30,7 @@ dépôt étant sa seule mémoire.
 
 from __future__ import annotations
 
+import zlib
 from datetime import date
 
 from .config import DAY_NAMES, Config, minutes_of
@@ -33,10 +40,34 @@ WORKFLOW_PATH = ".github/workflows/journal.yml"
 SOURCE_PAR_DEFAUT = "git+https://github.com/GuillaumeYves/commytho@main"
 
 
-def cron_apres(window_end: str) -> str:
-    """Créneau cron quotidien, trois heures après la fermeture de la plage."""
-    heure = (minutes_of(window_end) // 60 + 3) % 24
-    return f"0 {heure} * * *"
+def minute_de_visite(repo_full_name: str) -> int:
+    """Minute à laquelle passer, tirée du nom du dépôt.
+
+    Jamais l'heure ronde : GitHub prévient que les tâches planifiées sont
+    retardées quand la charge est forte, et tout le monde demande la minute
+    zéro. Répartir sur le reste de l'heure coûte une ligne et évite le
+    créneau le plus encombré.
+    """
+    empreinte = zlib.crc32(repo_full_name.encode("utf-8"))
+    return 7 + empreinte % 46
+
+
+def crons_quotidiens(config: Config) -> list[str]:
+    """Créneaux cron de la journée, en UTC.
+
+    Deux passages, pas un. Une visite retardée de deux heures ne se voit pas,
+    puisque chaque commit porte la date de son créneau, mais une visite sautée
+    laisse un trou. Comme une visite qui n'a rien à faire ne coûte que quelques
+    secondes de runner, le second passage est une assurance bon marché.
+
+    Le premier tombe trois heures après la fermeture de la plage. La marge
+    absorbe l'écart entre l'heure de la machine et l'heure du runner, sans
+    avoir à deviner un décalage qui change deux fois par an.
+    """
+    minute = minute_de_visite(config.repo.full_name)
+    premiere = (minutes_of(config.schedule.window_end) // 60 + 3) % 24
+    seconde = (premiere + 8) % 24
+    return [f"{minute} {heure} * * *" for heure in (premiere, seconde)]
 
 
 def describe_days(config: Config) -> str:
@@ -51,6 +82,11 @@ def describe_days(config: Config) -> str:
     return ",".join(DAY_NAMES[d] for d in jours)
 
 
+def _ligne_cron(expression: str) -> str:
+    """Une entree de la liste schedule, indentee comme le reste du fichier."""
+    return f'    - cron: "{expression}"' + chr(10)
+
+
 def render(
     config: Config,
     source: str = SOURCE_PAR_DEFAUT,
@@ -59,6 +95,7 @@ def render(
 ) -> str:
     """Compose le fichier de workflow à déposer dans le dépôt cible."""
     planning = config.schedule
+    crons = "".join(_ligne_cron(c) for c in crons_quotidiens(config))
     auteur = f"{config.author.name} <{config.author.email}>"
     # Le bloc env ne sort que s'il a quelque chose à contenir : une clé env
     # sans valeur ferait refuser le fichier par GitHub.
@@ -85,8 +122,7 @@ def render(
 {note_tz}
 on:
   schedule:
-    - cron: "{cron_apres(planning.window_end)}"
-  workflow_dispatch:
+{crons}  workflow_dispatch:
 
 permissions:
   contents: write
