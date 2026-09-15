@@ -36,6 +36,7 @@ Il vous faut aussi `git`, et Python 3.10 ou plus récent.
 commytho login     # enregistre un jeton GitHub dans le trousseau du système
 commytho init      # choisit le dépôt cible, ou le crée
 commytho up        # pose la tâche planifiée
+commytho github    # pose le relais GitHub, pour les jours machine éteinte
 commytho status    # montre où en sont les choses
 commytho down      # retire la tâche planifiée
 ```
@@ -165,6 +166,46 @@ Pour qu'elle continue à tourner, activez le maintien de session :
 ```sh
 loginctl enable-linger "$USER"
 ```
+
+## Le relais GitHub
+
+La tâche planifiée ne sert à rien quand la machine est éteinte. `commytho
+github` dépose dans le dépôt cible un workflow qui prend le relais :
+
+```sh
+commytho github --tz Europe/Paris
+```
+
+Une visite par jour, après la fermeture de la plage horaire. Elle pose d'un
+coup les commits du programme du jour et reprend au passage les journées
+restées vides. Chaque commit garde la date et l'heure de son créneau, pas
+celles de la visite : que GitHub arrive avec une demi-heure de retard, ce qui
+arrive souvent, ne se voit nulle part.
+
+Le workflow reprend le rythme de votre configuration. Après un `commytho up`,
+reposez-le pour qu'il suive.
+
+Machine et workflow peuvent tourner ensemble. Le journal versé dans le dépôt
+leur sert de mémoire commune : un créneau qui y figure déjà n'est pas
+recommité, quelle que soit celui des deux qui l'a posé.
+
+| Option                | Effet                                                    |
+| --------------------- | -------------------------------------------------------- |
+| `--tz ZONE`         | fuseau du runner, sinon les commits portent l'heure UTC   |
+| `--remove`          | retire le workflow du dépôt                              |
+| `--dry-run`         | affiche le workflow sans rien poser                       |
+| `--source SPEC`     | version de commytho installée par le workflow            |
+
+Le workflow ne demande aucun secret : `actions/checkout` laisse ses
+identifiants dans la copie, et la permission `contents: write` suffit à
+pousser. Les commits gardent votre adresse d'auteur, qui est ce que GitHub
+regarde pour le graphe des contributions.
+
+Deux points à connaître. Poser un fichier dans `.github/workflows` demande au
+jeton la permission `Workflows : Read and write`, en plus de `Contents` ;
+commytho vous le dira si elle manque. Et GitHub désactive les workflows
+planifiés d'un dépôt resté soixante jours sans le moindre commit, ce qui ne
+risque pas d'arriver ici.
 
 ## Où sont les fichiers
 

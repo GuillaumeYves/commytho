@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from commytho import auth, cli, paths
+from commytho import auth, cli, paths, repo
 from commytho import config as conf
 
 
@@ -105,6 +105,14 @@ class _HuitHeures:
         return datetime.fromisoformat(valeur)
 
 
+def _faux_resultat(entrees):
+    """Ce que rendrait repo.make_commits, sans toucher à git."""
+    return [
+        repo.Commit(jour=jour, creneau=creneau, message=message, hash=f"hash{i}")
+        for i, (jour, creneau, message) in enumerate(entrees)
+    ]
+
+
 class _QuatorzeSeptembre(date):
     """Fige le jour courant, sans quoi la reprise viserait de vraies dates."""
 
@@ -130,7 +138,7 @@ def run_prepare(monkeypatch):
 
         def faux_commits(config, token, creneaux):
             recu.append(list(creneaux))
-            return [f"hash{i}" for i in range(len(creneaux))]
+            return _faux_resultat(creneaux)
 
         monkeypatch.setattr(cli.repo, "make_commits", faux_commits)
         return recu
@@ -189,7 +197,7 @@ def test_la_reprise_solde_les_journees_manquees(monkeypatch):
 
     def faux_commits(config, token, creneaux):
         recu.append(list(creneaux))
-        return [f"hash{i}" for i in range(len(creneaux))]
+        return _faux_resultat(creneaux)
 
     monkeypatch.setattr(cli.repo, "make_commits", faux_commits)
     assert cli.main(["run"]) == 0
@@ -223,7 +231,7 @@ def test_la_reprise_ne_remonte_pas_avant_la_pose_de_la_tache(monkeypatch):
 
     def faux_commits(config, token, creneaux):
         recu.append(list(creneaux))
-        return ["hash0"]
+        return _faux_resultat(creneaux)
 
     monkeypatch.setattr(cli.repo, "make_commits", faux_commits)
     assert cli.main(["run"]) == 0

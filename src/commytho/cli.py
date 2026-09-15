@@ -12,8 +12,9 @@ import argparse
 import getpass
 import sys
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
-from . import __version__, auth, github, messages, paths, planner, repo, state
+from . import __version__, auth, github, messages, paths, planner, repo, state, workflow
 from . import config as conf
 from .schedulers import get_scheduler
 from .schedulers.base import SchedulerError
@@ -406,6 +407,188 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
+# github et ci : le relais quand la machine est éteinte
+# --------------------------------------------------------------------------
+
+
+def cmd_github(args: argparse.Namespace) -> int:
+    """Pose, met à jour ou retire le workflow dans le dépôt cible."""
+    configuration = conf.load()
+    if not configuration.is_linked:
+        return erreur("Aucun dépôt configuré. Lancez d'abord : commytho init")
+    if not configuration.author.email:
+        return erreur("Aucun auteur connu. Lancez d'abord : commytho login")
+
+    contenu = workflow.render(configuration, source=args.source, timezone=args.tz)
+    if args.dry_run:
+        print(contenu, end="")
+        return 0
+
+    try:
+        token = auth.retrieve()
+    except auth.AuthError as exc:
+        return erreur(str(exc))
+
+    try:
+        checkout = repo.ensure_checkout(configuration, token)
+    except repo.GitError as exc:
+        return erreur(str(exc))
+
+    chemin = checkout / workflow.WORKFLOW_PATH
+    if args.remove:
+        if not chemin.exists():
+            print("Aucun workflow posé dans le dépôt.")
+            return 0
+        repo.run_git(["rm", "--quiet", "--", workflow.WORKFLOW_PATH], cwd=checkout)
+        message = "Retire le workflow du journal"
+    else:
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        chemin.write_text(contenu, encoding="utf-8")
+        repo.run_git(["add", "--", workflow.WORKFLOW_PATH], cwd=checkout)
+        message = "Met le workflow du journal à jour"
+
+    if not repo.run_git(["status", "--porcelain"], cwd=checkout):
+        print("Le workflow du dépôt est déjà à jour.")
+        return 0
+
+    try:
+        repo.run_git(["commit", "-m", message], cwd=checkout)
+        repo.run_git(
+            ["push", "origin", f"HEAD:{configuration.repo.branch}"], cwd=checkout, token=token
+        )
+    except repo.GitError as exc:
+        if not _refus_de_workflow(str(exc)):
+            return erreur(str(exc))
+        erreur(
+            "GitHub a refusé le push : écrire dans .github/workflows demande la "
+            "permission Workflows."
+        )
+        print(
+            "Ajoutez Workflows : Read and write au jeton sur "
+            "https://github.com/settings/personal-access-tokens, "
+            "puis relancez commytho login.",
+            file=sys.stderr,
+        )
+        return 1
+
+    journalise(f"github : {message.lower()}")
+    if args.remove:
+        print("Workflow retiré. Seule votre machine alimente encore le journal.")
+        return 0
+
+    print(f"Workflow posé dans {configuration.repo.full_name} ({workflow.WORKFLOW_PATH}).")
+    cron = workflow.cron_apres(configuration.schedule.window_end)
+    print(f"Visite quotidienne : cron {cron} UTC.")
+    if not args.tz:
+        print()
+        print("Aucun fuseau précisé : les commits porteront l'heure UTC du runner.")
+        print("Pour l'heure de chez vous : commytho github --tz Europe/Paris")
+    print()
+    print("La machine et le workflow peuvent tourner ensemble : le journal versé")
+    print("dans le dépôt fait foi, aucun créneau n'est poussé deux fois.")
+    return 0
+
+
+def _refus_de_workflow(message: str) -> bool:
+    """Reconnaît le refus de GitHub quand le jeton n'a pas la permission Workflows."""
+    repere = message.lower()
+    return "workflow" in repere and ("refusing" in repere or "scope" in repere)
+
+
+def cmd_ci(args: argparse.Namespace) -> int:
+    """Un réveil, mais dans un runner GitHub.
+
+    Rien n'est lu ni écrit en dehors de la copie du dépôt : ni configuration,
+    ni fichier d'état, ni trousseau. Le journal versé dans le dépôt tient lieu
+    de mémoire, ce qui rend la visite rejouable sans risque et la laisse
+    cohabiter avec la machine de l'utilisateur.
+    """
+    try:
+        configuration = _config_en_ligne(args)
+    except conf.ConfigError as exc:
+        return erreur(str(exc))
+
+    checkout = Path.cwd()
+    if not (checkout / ".git").exists():
+        return erreur("commytho ci doit tourner dans une copie du dépôt cible.")
+
+    repo.run_git(["config", "user.name", configuration.author.name], cwd=checkout)
+    repo.run_git(["config", "user.email", configuration.author.email], cwd=checkout)
+
+    aujourdhui = date.today()
+    maintenant = datetime.now().strftime("%H:%M")
+    deja = repo.journal_slots(checkout, configuration.target_file)
+    pool = messages.load_pool(args.messages)
+
+    entrees: list[tuple[date, str, str]] = []
+    for recul in range(max(0, args.jours), -1, -1):
+        jour = aujourdhui - timedelta(days=recul)
+        programme = planner.plan_for_day(configuration.schedule, jour, configuration.repo.full_name)
+        if not programme:
+            continue
+        faits = deja.get(jour.isoformat(), set())
+        restant = configuration.schedule.cap_per_day - len(faits)
+        if restant <= 0:
+            continue
+        manques = [creneau for creneau in programme if creneau not in faits]
+        if jour == aujourdhui:
+            # Un créneau qui n'est pas encore arrivé attendra la prochaine visite.
+            limite = conf.minutes_of(maintenant)
+            manques = [c for c in manques if conf.minutes_of(c) <= limite]
+        entrees += [(jour, c, messages.pick(pool, jour, c)) for c in manques[-restant:]]
+
+    if not entrees:
+        print("Rien à faire : le journal est déjà à jour.")
+        return 0
+
+    try:
+        faits = repo.commit_entries(configuration, checkout, entrees)
+        if faits:
+            repo.run_git(["push", "origin", f"HEAD:{configuration.repo.branch}"], cwd=checkout)
+    except repo.GitError as exc:
+        return erreur(str(exc))
+
+    if not faits:
+        print("Rien à faire : le journal est déjà à jour.")
+        return 0
+
+    journees = sorted({commit.jour for commit in faits})
+    print(
+        f"{len(faits)} commit(s) poussé(s) sur {len(journees)} journée(s), "
+        f"du {journees[0].isoformat()} au {journees[-1].isoformat()}."
+    )
+    if args.verbose:
+        for commit in faits:
+            print(f"  {commit.hash} {commit.jour.isoformat()} {commit.creneau} : {commit.message}")
+    return 0
+
+
+def _config_en_ligne(args: argparse.Namespace) -> conf.Config:
+    """Reconstruit une configuration complète depuis les options de commytho ci."""
+    if "/" not in args.repo:
+        raise conf.ConfigError("Le dépôt s'écrit proprietaire/nom.")
+    proprietaire, _, nom = args.repo.partition("/")
+
+    nom_auteur, _, adresse = args.author.partition("<")
+    adresse = adresse.strip().rstrip(">")
+    if not adresse:
+        raise conf.ConfigError("L'auteur s'écrit : Nom <adresse>")
+
+    configuration = conf.Config()
+    configuration.repo = conf.Repo(owner=proprietaire, name=nom, branch=args.branch)
+    configuration.author = conf.Author(name=nom_auteur.strip() or proprietaire, email=adresse)
+    configuration.target_file = args.file
+    configuration.max_lines_per_file = max(0, args.max_lines)
+
+    planning = configuration.schedule
+    planning.days = conf.parse_days(args.days)
+    planning.min_per_day, planning.max_per_day = conf.parse_range(args.per_day)
+    planning.window_start, planning.window_end = conf.parse_window(args.window)
+    planning.cap_per_day = args.max
+    return configuration
+
+
+# --------------------------------------------------------------------------
 # run : le réveil appelé par le planificateur
 # --------------------------------------------------------------------------
 
@@ -453,19 +636,27 @@ def cmd_run(args: argparse.Namespace) -> int:
     entrees = [(jour, creneau, messages.pick(pool, jour, creneau)) for jour, creneau in a_faire]
 
     try:
-        empreintes = repo.make_commits(configuration, token, entrees)
+        faits = repo.make_commits(configuration, token, entrees)
     except repo.GitError as exc:
         journalise(f"run : échec du commit ({exc})")
         return erreur(str(exc))
 
+    # Les créneaux écartés parce que le journal les portait déjà comptent comme
+    # honorés : un autre commytho les a posés, il n'y a plus rien à y faire.
     if not args.force:
         for jour, creneau in a_faire:
             state.record(etat, jour, [creneau])
-    etat.total_commits += len(empreintes)
+    etat.total_commits += len(faits)
     etat.last_run = datetime.now().isoformat(timespec="seconds")
     state.save(etat)
 
-    resume = _resume(a_faire, entrees, empreintes, aujourdhui)
+    if not faits:
+        journalise("run : rien à poser, le journal portait déjà ces créneaux")
+        if args.verbose:
+            print("Le journal portait déjà ces créneaux, rien à pousser.")
+        return 0
+
+    resume = _resume(faits, aujourdhui)
     journalise(f"run : {resume}")
     if args.verbose or args.force:
         # capitalize mettrait le reste de la ligne en minuscules, message de
@@ -519,23 +710,20 @@ def _pose_le(configuration: conf.Config) -> date | None:
         return None
 
 
-def _resume(
-    a_faire: list[tuple[date, str]],
-    entrees: list[tuple[date, str, str]],
-    empreintes: list[str],
-    aujourdhui: date,
-) -> str:
+def _resume(faits: list[repo.Commit], aujourdhui: date) -> str:
     """Une ligne de journal qui dise ce qui vient d'être poussé."""
-    if len(empreintes) == 1:
-        jour, creneau = a_faire[0]
-        quand = creneau if jour == aujourdhui else f"{jour.isoformat()} {creneau}"
-        return f"commit {empreintes[0]} pour le créneau {quand} ({entrees[0][2]})"
+    if len(faits) == 1:
+        seul = faits[0]
+        quand = (
+            seul.creneau if seul.jour == aujourdhui else f"{seul.jour.isoformat()} {seul.creneau}"
+        )
+        return f"commit {seul.hash} pour le créneau {quand} ({seul.message})"
 
-    journees = sorted({jour for jour, _ in a_faire})
+    journees = sorted({commit.jour for commit in faits})
     if len(journees) == 1:
-        return f"{len(empreintes)} commits rattrapés, de {a_faire[0][1]} à {a_faire[-1][1]}"
+        return f"{len(faits)} commits rattrapés, de {faits[0].creneau} à {faits[-1].creneau}"
     return (
-        f"{len(empreintes)} commits rattrapés sur {len(journees)} journées, "
+        f"{len(faits)} commits rattrapés sur {len(journees)} journées, "
         f"du {journees[0].isoformat()} au {journees[-1].isoformat()}"
     )
 
@@ -602,6 +790,48 @@ def build_parser() -> argparse.ArgumentParser:
     p_up.add_argument("--messages", metavar="FICHIER", help="liste de messages, un par ligne")
     p_up.add_argument("--dry-run", action="store_true", help="afficher sans rien installer")
     p_up.set_defaults(func=cmd_up)
+
+    p_github = sous.add_parser(
+        "github", help="poser le workflow GitHub qui prend le relais machine eteinte"
+    )
+    p_github.add_argument(
+        "--tz",
+        metavar="ZONE",
+        default="",
+        help="fuseau du runner, par exemple Europe/Paris, pour dater les commits chez vous",
+    )
+    p_github.add_argument(
+        "--source",
+        default=workflow.SOURCE_PAR_DEFAUT,
+        metavar="SPEC",
+        help="version de commytho installee par le workflow",
+    )
+    p_github.add_argument("--remove", action="store_true", help="retirer le workflow du depot")
+    p_github.add_argument(
+        "--dry-run", action="store_true", help="afficher le workflow sans rien poser"
+    )
+    p_github.set_defaults(func=cmd_github)
+
+    p_ci = sous.add_parser("ci", help="une visite depuis un runner GitHub, dans la copie courante")
+    p_ci.add_argument("--repo", required=True, metavar="PROPRIETAIRE/NOM")
+    p_ci.add_argument("--branch", default="main")
+    p_ci.add_argument("--author", required=True, metavar="NOM <ADRESSE>")
+    p_ci.add_argument("--per-day", dest="per_day", default="1-3", metavar="N|N-M")
+    p_ci.add_argument("--days", default="lun-ven", metavar="JOURS")
+    p_ci.add_argument("--window", default="09:00-19:00", metavar="HH:MM-HH:MM")
+    p_ci.add_argument("--max", type=int, default=conf.RECOMMENDED_MAX_PER_DAY, metavar="N")
+    p_ci.add_argument("--file", default="journal.md", metavar="FICHIER")
+    p_ci.add_argument("--max-lines", dest="max_lines", type=int, default=1000, metavar="N")
+    p_ci.add_argument(
+        "--jours",
+        type=int,
+        default=7,
+        metavar="N",
+        help="journees passees reprises a chaque visite",
+    )
+    p_ci.add_argument("--messages", metavar="FICHIER", help="liste de messages, un par ligne")
+    p_ci.add_argument("--verbose", action="store_true", help="detailler les commits poses")
+    p_ci.set_defaults(func=cmd_ci)
 
     p_down = sous.add_parser("down", help="retirer la tâche planifiée")
     p_down.set_defaults(func=cmd_down)

@@ -5,6 +5,30 @@ numéros suivent [SemVer](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+## [1.2.0] - 2026-09-15
+
+### Ajouté
+
+- `commytho github` dépose dans le dépôt cible un workflow qui tient le journal
+  depuis GitHub, une visite par jour, après la fermeture de la plage horaire.
+  Une machine éteinte ne fait donc plus de trou. Le workflow reprend le rythme
+  de la configuration locale, ne demande aucun secret, et se contente de la
+  permission `contents: write`. `--remove` le retire, `--dry-run` l'affiche,
+  `--tz` donne le fuseau dans lequel dater les commits.
+- `commytho ci` est la visite elle-même, prévue pour tourner dans un runner.
+  Elle ne lit ni configuration, ni fichier d'état, ni trousseau : tout vient de
+  ses options et de la copie du dépôt déjà présente.
+
+### Modifié
+
+- Un créneau déjà consigné dans le journal n'est plus recommité. Le journal
+  versé dans le dépôt devient la mémoire partagée de tous les commytho qui
+  visent ce dépôt : la machine et le workflow peuvent tourner ensemble sans se
+  marcher dessus, et un fichier d'état perdu ne fait plus de doublons.
+- `make_commits` rend la liste des commits réellement posés, créneau compris,
+  plutôt que des empreintes seules. Les comptes rendus disent donc ce qui a
+  été fait plutôt que ce qui avait été demandé.
+
 ## [1.1.0] - 2026-09-15
 
 ### Ajouté

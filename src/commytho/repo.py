@@ -11,9 +11,11 @@ d'environnement, ce qui le tient hors de la liste des processus.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 
@@ -181,37 +183,92 @@ def _supprime_arborescence(chemin: Path) -> None:
     shutil.rmtree(chemin, onerror=force)
 
 
+@dataclass
+class Commit:
+    """Un commit réellement posé, avec le créneau qu'il honore."""
+
+    jour: date
+    creneau: str
+    message: str
+    hash: str
+
+
 def make_commit(config: Config, token: str, jour: date, creneau: str, message: str) -> str:
     """Commite un seul créneau. Raccourci sur make_commits."""
-    return make_commits(config, token, [(jour, creneau, message)])[0]
+    return make_commits(config, token, [(jour, creneau, message)])[0].hash
 
 
-def make_commits(config: Config, token: str, creneaux: list[tuple[date, str, str]]) -> list[str]:
-    """Commite une série de créneaux, pousse une fois, renvoie les hashs courts.
+def make_commits(config: Config, token: str, entrees: list[tuple[date, str, str]]) -> list[Commit]:
+    """Met à jour la copie locale, commite les créneaux demandés, pousse une fois.
+
+    Le push est fait une seule fois, à la fin : rattraper un week-end éteint ne
+    doit pas ouvrir quarante connexions à GitHub.
+    """
+    if not entrees:
+        return []
+    checkout = ensure_checkout(config, token)
+    faits = commit_entries(config, checkout, entrees)
+    if faits:
+        run_git(["push", "origin", f"HEAD:{config.repo.branch}"], cwd=checkout, token=token)
+    return faits
+
+
+def commit_entries(
+    config: Config, checkout: Path, entrees: list[tuple[date, str, str]]
+) -> list[Commit]:
+    """Commite les créneaux demandés dans une copie déjà à jour, sans pousser.
 
     Chaque entrée porte sa propre date : un réveil peut donc solder à la fois
     les créneaux du jour et ceux des journées manquées, chaque commit gardant
     l'horodatage de son créneau d'origine plutôt que celui du réveil.
 
-    Le push est fait une seule fois, à la fin : rattraper un week-end éteint ne
-    doit pas ouvrir quarante connexions à GitHub.
+    Un créneau déjà présent dans le journal est ignoré. C'est ce qui permet à
+    plusieurs commytho de viser le même dépôt, celui de la machine et celui
+    d'une action GitHub par exemple, sans se marcher dessus : le journal versé
+    dans le dépôt fait foi, et non un fichier d'état local que l'autre ne voit
+    pas.
     """
-    if not creneaux:
+    if not entrees:
         return []
 
-    checkout = ensure_checkout(config, token)
+    deja = journal_slots(checkout, config.target_file)
     journal = Journal(checkout, config.target_file, config.max_lines_per_file)
 
-    empreintes: list[str] = []
-    for jour, creneau, message in creneaux:
+    faits: list[Commit] = []
+    for jour, creneau, message in entrees:
+        if creneau in deja.get(jour.isoformat(), set()):
+            continue
         suivi = journal.append(messages.journal_line(jour, creneau, message))
         with _dates_git(_iso_local(jour, creneau)):
             run_git(["add", "--", suivi], cwd=checkout)
             run_git(["commit", "-m", message], cwd=checkout)
-        empreintes.append(run_git(["rev-parse", "--short", "HEAD"], cwd=checkout))
+        empreinte = run_git(["rev-parse", "--short", "HEAD"], cwd=checkout)
+        faits.append(Commit(jour=jour, creneau=creneau, message=message, hash=empreinte))
+    return faits
 
-    run_git(["push", "origin", f"HEAD:{config.repo.branch}"], cwd=checkout, token=token)
-    return empreintes
+
+# Une ligne de journal, telle que messages.journal_line l'écrit.
+LIGNE_JOURNAL = re.compile(r"^- (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}) : ")
+
+
+def journal_slots(checkout: Path, base: str) -> dict[str, set[str]]:
+    """Créneaux déjà consignés dans le journal, par date ISO.
+
+    Le journal est la seule mémoire partagée entre les machines qui alimentent
+    le dépôt. Le relire coûte moins cher que de faire confiance à un état local
+    qui peut avoir disparu, ou n'avoir jamais existé sur un runner.
+    """
+    releve: dict[str, set[str]] = {}
+    for index in range(1, _dernier_index(checkout, base) + 1):
+        chemin = checkout / _nom_indexe(base, index)
+        if not chemin.exists():
+            continue
+        with chemin.open("r", encoding="utf-8", errors="replace") as fichier:
+            for ligne in fichier:
+                trouve = LIGNE_JOURNAL.match(ligne)
+                if trouve:
+                    releve.setdefault(trouve.group(1), set()).add(trouve.group(2))
+    return releve
 
 
 class Journal:
